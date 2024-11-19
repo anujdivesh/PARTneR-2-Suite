@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Sep 19 13:16:24 2024
+
+@author: judith
+"""
+
+
+from datetime import datetime, timedelta
+import os 
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+from netCDF4 import Dataset
+
+
+pathruns = '/media/judith/10TB1/ECIKS/historic_TCs_Rarotonga/'
+domain_code = 'Rarotonga'
+
+destination = '/media/judith/10TB1/ECIKS/historic_TCs_Rarotonga/results_historic/'
+
+# read list of selected storm
+df = pd.read_csv('/media/judith/10TB1/ECIKS/historic_TCs_Rarotonga/common_5d/selected_historic_Rarotonga.csv')
+    
+
+Hs = np.empty((0,10078))
+Tm = np.empty((0,10078))
+Tp = np.empty((0,10078))
+Dir = np.empty((0,10078))
+
+Time = np.array([])
+
+for itc in range(0,len(df.id)):
+    try:
+        stormname = df.tcname[itc]
+        stormyear = df.tcyear[itc]
+        
+        pathnewrun = os.path.join(pathruns + stormname + '_' + str(stormyear) + '_'  + domain_code + '/Run_000/')
+        pathresults= os.path.join(pathruns + stormname + '_' + str(stormyear) + '_'  + domain_code + '/Run_000/results/')
+    
+        
+        dtime = pd.read_csv(pathresults + 'datetimes.csv')
+        try:
+            start_date = datetime.strptime(dtime.datetime[0],'%Y-%m-%d %H:%M:%S') + timedelta(hours=1)
+        except:
+            start_date = datetime.strptime(dtime.datetime[0],'%Y-%m-%d') + timedelta(hours=1)
+                                           
+        try:
+            end_date = datetime.strptime(dtime.datetime[1],'%Y-%m-%d %H:%M:%S')
+        except:
+            end_date = datetime.strptime(dtime.datetime[1],'%Y-%m-%d')
+        
+        date_list = []
+        current_date = start_date
+        while current_date <= end_date:
+            date_list.append(current_date.toordinal() + (current_date.hour + current_date.minute / 60 + current_date.second / 3600) / 24)
+            current_date += timedelta(hours=1)
+    
+        Time = np.concatenate((Time,date_list))
+    
+        data = Dataset(pathnewrun+'swan_HS.63.nc')
+        hs = np.array(data['swan_HS'])
+        hs[0,:] = hs[0,:] * np.nan
+        Hs = np.concatenate((Hs,hs), axis=0)
+     
+    
+        data = Dataset(pathnewrun+'swan_TM02.63.nc')
+        tm = np.array(data['swan_TM02'])
+        tm[0,:] = hs[0,:]* np.nan
+        Tm = np.concatenate((Tm,tm), axis=0)
+    
+    
+        data = Dataset(pathnewrun+'swan_TPS.63.nc')
+        tp = np.array(data['swan_TPS'])
+        tp[0,:] = hs[0,:]* np.nan
+        Tp = np.concatenate((Tp,tp), axis=0)
+    
+        data = Dataset(pathnewrun+'swan_DIR.63.nc')
+        dire = np.array(data['swan_DIR'])
+        dire[0,:]= hs[0,:]* np.nan
+        Dir= np.concatenate((Dir,dire), axis=0)
+
+
+    except:
+        
+        print("TC %s has not run succesfully" % (stormname ))
+
+
+x = np.array(data['x'])
+y = np.array(data['y'])
+
+
+nodes = np.vstack((x,y)).T
+elements = np.array(data['element'])
+
+
+# Create a NetCDF file
+nc_file = '/media/judith/10TB1/ECIKS/historic_TCs_Rarotonga/results_historic/all_cyclones.nc'
+ds = Dataset(nc_file, 'w', format='NETCDF4') 
+# Create dimensions
+
+ds.createDimension('index',None)
+ds.createDimension('time', None)
+ds.createDimension('column', None)
+ds.createDimension('triang', None)
+
+# Create variables
+time = ds.createVariable(
+    'time', 'f4', ('time', ))  # 2D coordinates
+time.units = 'julian_days'
+time[:] = Time
+
+longitude = ds.createVariable(
+    'longitude', 'f4', ('index',))  # 2D coordinates
+longitude.units = 'degrees'
+longitude[:] = x
+
+
+latitude = ds.createVariable(
+    'latitude', 'f4', ('index',))  # 2D coordinates
+latitude.units = 'degrees'
+latitude[:] = y
+
+
+element_var = ds.createVariable(
+    'elements', 'i4', ('triang','column'))  # Triangle elements
+element_var.units = 'triangles'
+element_var[:,:] = elements
+
+significant_wave_height = ds.createVariable(
+    'significant_wave_height', 'f4', ('time','index'))  # Wave heights
+significant_wave_height.units = 'meters'
+significant_wave_height[:,:]  = Hs
+
+mean_wave_period = ds.createVariable(
+    'mean_wave_period', 'f4', ('time','index'))
+mean_wave_period.units = 'seconds'
+mean_wave_period[:,:] = Tm
+
+peak_wave_period = ds.createVariable(
+    'peak_wave_period', 'f4', ('time','index'))
+peak_wave_period.units = 'seconds'
+peak_wave_period[:,:] = Tp
+
+wave_direction = ds.createVariable(
+    'wave_direction', 'f4', ('time','index'))
+wave_direction.units = 'degrees (cartesian?)'
+wave_direction[:,:] = Dir
+
+
+
+
+
+
+
+
+
+
+# Assign data to variables
+
+
+
+
+
+
+
+
+
+
+data = Dataset('/media/judith/10TB1/ECIKS/historic_TCs_Rarotonga/results_historic/all_cyclones.nc')
+
+timex = np.array(data['time'])
+hs = np.array(data['significant_wave_height'])
+lon = np.array(data['longitude'])
+lat = np.array(data['latitude'])
+
+
+distances = np.sqrt(np.sum((np.array([lon,lat]).T- np.array([-21,200.22])) ** 2, axis=1))
+closest_index = np.argmin(distances)
+
+
+
+
+        plt.plot(lon,lat,'.')
+
+
+plt.pcolor(hs, cmap='viridis', shading='auto') 
+
+
+      x = np.array(data['element'])
+
+
+
+        
+        plt.plot(timex,hs[:,8996])
+        plt.ylim(0,10) 

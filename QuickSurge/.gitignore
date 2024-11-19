@@ -1,0 +1,14 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+# Log file
+Input_files/
+/QuickSurge/Tides/*
+Tides/
+Input_files/
+/miniconda/*
+miniconda/
+/QuickSurge/Input_files/*
+/QuickSurge/Input_files
+# Output
+Model/
+
