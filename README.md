@@ -24,7 +24,7 @@ This repository contains suite of models that was developed under PARTneR-2 Proj
     - `Too many/NO files supplied. Exiting.` message, meaning there was no files `.csv` `.json` provided or there was many files provided. Ensure 1 of each is provided.
     - `Job is already running. Exiting...` message, meaning there could be an instance of the model being run.
 
-###4. HAZARD latest datasets
+### 4. HAZARD latest datasets
 - A directory `/mnt/DATA/production/outputs` has been created to house latest results.
 
-###5. Judith, Sam, Sachin to continue......
+### 5. Judith, Sam, Sachin to continue......
