@@ -1,5 +1,28 @@
 #!/bin/bash
 
+XML_FILE="/mnt/DATA/production/flag.xml"
+
+get_flag_value() {
+    grep -oP '(?<=<isRunning>).*?(?=</isRunning>)' "$XML_FILE"
+}
+
+set_flag_value() {
+    sed -i "s|<isRunning>.*</isRunning>|<isRunning>$1</isRunning>|" "$XML_FILE"
+}
+
+is_running=$(get_flag_value)
+
+if [ "$is_running" == "true" ]; then
+    echo "Job is already running. Exiting..."
+    exit 1
+fi
+
+set_flag_value "true"
+
+echo "Running cron job..."
+###############################MAIN#######################################
+#!/bin/bash
+
 #REMOVE input file
 #rm /mnt/DATA/production/out.log
 
@@ -26,7 +49,7 @@ echo "Running TCHA model"
 ##FOR DEV ONLY
 #docker run -v /mnt/DATA/production/TCHA:/TCHA -ti --rm --cpuset-cpus="16-17" tcha-prod /bin/bash -c ". /opt/miniconda/bin/activate; cd /TCHA/tcrm; python main.py"
 ##FOR PROD
-docker run -v /mnt/DATA/production/TCHA:/TCHA --rm --cpuset-cpus="16-20" tcha-prod /bin/bash -c ". /opt/miniconda/bin/activate; cd /TCHA/tcrm; python main.py"
+docker run -v /mnt/DATA/production/TCHA:/TCHA --rm --cpuset-cpus="22-22" tcha-prod /bin/bash -c ". /opt/miniconda/bin/activate; cd /TCHA/tcrm; python main.py"
 
 #RUN QuickSurge
 echo "Running QuickSurge Model"
@@ -37,11 +60,13 @@ docker run -v /mnt/DATA/production/QuickSurge:/QuickSurge --rm --cpuset-cpus="0-
 
 #GET LATEST FILE FROM TCHA
 latest_dir_tcha=$(realpath "$(ls -td /mnt/DATA/production/TCHA/output/*/ | head -n 1)")
+echo $latest_dir_tcha
 cp -r "$latest_dir_tcha"/* "/mnt/DATA/production/outputs"
 echo "Copied TCHA."
 
 #GET LATEST FILES FROM TCHA
 latest_dir_quicksurge=$(realpath "$(ls -td /mnt/DATA/production/QuickSurge/Runs/*/ | head -n 1)")
+echo $latest_dir_quicksurge
 cp -r "$latest_dir_quicksurge"/* "/mnt/DATA/production/outputs"
 echo "Copied QuickSurge."
 
@@ -54,3 +79,11 @@ truncate -s 100M /mnt/DATA/production/out.log
 echo "HAZARD model run completed...."
 
 #RUN RiskScape
+
+
+
+###############################MAIN#######################################
+
+set_flag_value "false"
+
+echo "Cron job completed."
