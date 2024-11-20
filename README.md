@@ -3,7 +3,7 @@ This repository contains suite of models that was developed under PARTneR-2 Proj
 
 ### 1. Prerequisite
 - Access to machine [ssh/sftp]
-  - contact noureddinet@spc.int or vincentk@spc.int or divesha@spc.int
+  - contact noureddinet@spc.int or divesha@spc.int
 - Cyclone track file from RSMC Nadi `csv format`. Sample file: [Link](https://github.com/anujdivesh/PARTneR-2-Suite/blob/main/20231023T030000Z_Official_Forecast_Track_2324_01F_Lola.csv)
   - it is important to breifly check the latest file you get with the sample above, esp datetime format.
 - Configuration file `.json`. Sample file [Link](https://github.com/anujdivesh/PARTneR-2-Suite/blob/main/01_test_config.json)
