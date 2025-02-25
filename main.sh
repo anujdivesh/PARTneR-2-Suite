@@ -76,10 +76,52 @@ rm /mnt/DATA/production/*.csv
 
 truncate -s 100M /mnt/DATA/production/out.log
 
+XML_FILE="/mnt/DATA/production/flag.xml"
+
+get_flag_value() {
+    grep -oP '(?<=<isRunning>).*?(?=</isRunning>)' "$XML_FILE"
+}
+
+set_flag_value() {
+    sed -i "s|<isRunning>.*</isRunning>|<isRunning>$1</isRunning>|" "$XML_FILE"
+}
+
+
+set_flag_value "false"
+
 echo "HAZARD model run completed...."
 
 #RUN RiskScape
+find /mnt/DATA/production/outputs -name "local_wind_merged.tif" -exec cp {} /mnt/DATA/production/outputs \;
+find /mnt/DATA/production/outputs -name "_merged.tif" -exec cp {} /mnt/DATA/production/outputs \;
 
+search_directory="/mnt/DATA/production/outputs"
+
+# Find the first JSON file in the specified directory
+json_file=$(find "$search_directory" -maxdepth 1 -name "*.json" -print -quit)
+
+# Check if a JSON file was found
+if [ -z "$json_file" ]; then
+  echo "No JSON file found in $search_directory"
+  exit 1
+fi
+
+# Extract the domainCode from the JSON file
+domain_code=$(grep -oP '"domainCode"\s*:\s*"\K[^"]+' "$json_file")
+cd /mnt/DATA/production/rs-projects/pdie_ini/"$domain_code" || { echo "Directory $domain_code not found."; exit 1; }
+echo "we are in the country directory $domain_code"
+
+python3 /mnt/DATA/production/rs-projects/pdie_ini/edit_RMSC_track_riskscape.py 
+
+#riskscape model run Cyclone-PDIE
+
+risk_output="/mnt/DATA/production/rs-projects/pdie_ini/$domain_code/output/Cyclone-PDIE/"
+
+#GET LATEST FILES FROM TCHA
+latest_dir_quicksurge=$(realpath "$(ls -td /mnt/DATA/production/rs-projects/pdie_ini/$domain_code/output/Cyclone-PDIE/*/ | head -n 1)")
+echo $latest_dir_quicksurge
+cp -r "$latest_dir_quicksurge"/* "/mnt/DATA/production/impact_output"
+echo "Copied RiskScape."
 
 
 ###############################MAIN#######################################
@@ -87,3 +129,9 @@ echo "HAZARD model run completed...."
 set_flag_value "false"
 
 echo "Cron job completed."
+
+
+
+
+
+
