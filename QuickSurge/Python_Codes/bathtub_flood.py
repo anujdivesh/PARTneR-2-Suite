@@ -11,7 +11,8 @@ import rasterio
 from rasterio.mask import mask
 import geopandas as gpd
 from shapely.geometry import mapping
-
+import os
+from osgeo import gdal
 
 def bathtub_flood(input_geotiff,subdomains,twl_points,aux_points,outputdir):
     
@@ -118,4 +119,15 @@ def bathtub_flood(input_geotiff,subdomains,twl_points,aux_points,outputdir):
         with rasterio.open(output_geotiff, "w", **meta,compress='deflate') as dest:
             dest.write(clipped_raster)
     
+    ## Merge rasters to the national level
+    file_paths = []
+    for folder, subs, files in os.walk(outputdir):
+      for filename in files:
+        file_paths.append(os.path.abspath(os.path.join(folder, filename)))
     
+    gdal.BuildVRT(outputdir+'_merged.vrt', file_paths)
+    translateoptions = gdal.TranslateOptions(format = 'GTiff',creationOptions = ["COMPRESS=DEFLATE" ,"PREDICTOR=2"])
+    gdal.Translate(outputdir+'_merged.tif', outputdir+'_merged.vrt', options=translateoptions)
+ 
+    
+        

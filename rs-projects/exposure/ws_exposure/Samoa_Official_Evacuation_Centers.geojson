@@ -1,0 +1,13 @@
+{
+"type": "FeatureCollection",
+"name": "Samoa Official Evacuation Centers",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "Name": "St. Joseph College", "Lat": -13.8532802, "Long": -171.7895053, "Village": "Alafua", "Island": "Upolu", "Source": null }, "geometry": { "type": "Point", "coordinates": [ -171.789505299999973, -13.853280199999972 ] } },
+{ "type": "Feature", "properties": { "Name": "Gym 2- Sports Complex", "Lat": -13.8452778, "Long": -171.7997222, "Village": "Tuanaimato", "Island": "Upolu", "Source": null }, "geometry": { "type": "Point", "coordinates": [ -171.799722199999962, -13.845277799999963 ] } },
+{ "type": "Feature", "properties": { "Name": "National University of Samoa", "Lat": -13.8525, "Long": -171.7497222, "Village": "Toamatagai", "Island": "Upolu", "Source": null }, "geometry": { "type": "Point", "coordinates": [ -171.749722199999979, -13.8525 ] } },
+{ "type": "Feature", "properties": { "Name": "Government Prayer House", "Lat": -13.8430556, "Long": -171.7683333, "Village": "Palisi", "Island": "Upolu", "Source": null }, "geometry": { "type": "Point", "coordinates": [ -171.768333299999966, -13.843055599999957 ] } },
+{ "type": "Feature", "properties": { "Name": "Samoa College", "Lat": -13.8486111, "Long": -171.7486111, "Village": "Vaivase", "Island": "Upolu", "Source": null }, "geometry": { "type": "Point", "coordinates": [ -171.748611099999977, -13.848611099999971 ] } },
+{ "type": "Feature", "properties": { "Name": "SDA Hall-ADRA", "Lat": -13.8386111, "Long": -171.7638889, "Village": "Lalovaea", "Island": "Upolu", "Source": null }, "geometry": { "type": "Point", "coordinates": [ -171.765918988018427, -13.838648463583143 ] } }
+]
+}

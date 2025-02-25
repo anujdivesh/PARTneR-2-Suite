@@ -1,0 +1,177 @@
+# parameters:
+# $hazard_maps: A CSV that points to other hazard .tif files to load
+# $event_ARI: the return period of the specific event to use
+# $SLR: projected sea-level rise
+# $islands: island groups to include, to filter out a subset of results
+# $metric_crs: A CRS suitable for representing the country's geometry in metre units
+
+#
+# Input exposure-layer
+#
+input(relation: $exposure, name: 'exposure') as input_exposures
+ ->
+select({ *, switch(exposure.Asset, default: false, cases: [{ in: $can_segment, return: true }]) as can_segment })
+ ->
+# reproject to metric CRS to speed up spatial operations
+select({ *, merge(exposure, { reproject(exposure.geom, $reproject_to) as geom }) as exposure })
+ ->
+# segment any lines/polygons by a fixed distance (not by a grid).
+# If any part of segment is exposed, then the whole segment is exposed.
+select({ *, measure(exposure.geom) as orig_size, segment(exposure.geom, $cut_distance) as segmented_geom }) as segment
+ ->
+# We work around RiskScape type ancestor issues with lists here by always segmenting and unnesting
+# If we can't segment, we throw away everything except the first row
+unnest(segmented_geom, index-key: 'segment_id')
+ ->
+filter(can_segment or segment_id = 1)
+ ->
+# NB: don't segment buildings or other discrete assets
+select({ *, if_then_else(can_segment, segmented_geom, exposure.geom ) as geom })
+ ->
+select({ *, measure(geom) as size }) as measure
+ ->
+# NB: use scale_factor=1.0 for points, so we don't end up with NaN
+select({ *, if_then_else(can_segment and size > 0, size / orig_size, 1.0) as scale_factor })
+ ->
+select({
+         *,
+         merge(exposure, {
+                           geom,
+                           exposure.Value * scale_factor as Value,
+                           round(size, 2) as Size
+                         }) as exposure
+       }) as scale_exposures
+  ->
+select({ *, sample_one(exposure, to_coverage($regions), buffer-distance: 50000) as Region }) as sample_region
+ ->
+# using all-intersections sampling for point data shouldn't matter
+select({ *, sample(geom, $floodmap) as hazard_depth }) as sample_hazard
+ ->
+select({
+         *,
+         max(map(hazard_depth, h -> if_then_else(str(h.sampled) = 'NaN', null_of('floating'), h.sampled))) as hazard_depth,
+         sum(map(hazard_depth, h -> if_then_else(h.sampled > $min_depth and str(h.sampled) != 'NaN', measure(h), 0.0))) as ExposedAreaOrLength
+       })
+ ->
+# use null here to skip CPython processing (and sped up how quickly the model runs)
+select({ *, if_then_else(hazard_depth > $min_depth, hazard_depth, null_of('floating')) as hazard_intensity }) as sampled
+ ->
+
+#
+# consequence analysis (calculate loss)
+#
+select({ *, if_null(hazard_intensity, 0.0) > 0.0 as Exposed })
+ ->
+select({
+         *,
+         if_then_else(Exposed, float(exposure.Value), 0.0) as ExposedValue,
+         exposure.Size as AreaOrLength
+       })
+ ->
+select({ *, Flood_Loss(exposure, hazard_intensity).Direct_Loss as Loss }) as event_impact_table
+
+#
+# Reporting the results - total/national loss
+#
+event_impact_table
+ ->
+group(select: {
+            *,
+            count(Exposed) as Exposed_Count,
+            count(*) as Total_Count,
+
+            round(sum(ExposedValue)) as Total_Exposed_Value,
+            round(sum(exposure.Value)) as Total_Value,
+
+            round(sum(ExposedAreaOrLength)) as Total_Exposed_Area_Or_Length,
+            round(sum(AreaOrLength)) as Total_Area_Or_Length,
+
+            sum(Loss) as Total_Loss,
+
+            round(mean(hazard_intensity), 2) as Average_Inundation_Depth,
+            round(max(hazard_intensity), 2) as Max_Inundation_Depth,
+      }) as national_event_impact
+ ->
+save('national-impact', format: 'csv')
+
+#
+# Regional impact
+#
+event_impact_table
+ ->
+group(by: { Region },
+      select: {
+            *,
+            count(Exposed) as Exposed_Count,
+            count(*) as Total_Count,
+
+            round(sum(ExposedValue)) as Total_Exposed_Value,
+            round(sum(exposure.Value)) as Total_Value,
+
+            round(sum(ExposedAreaOrLength)) as Total_Exposed_Area_Or_Length,
+            round(sum(AreaOrLength)) as Total_Area_Or_Length,
+
+            sum(Loss) as Total_Loss,
+
+            round(mean(hazard_intensity), 2) as Average_Inundation_Depth,
+            round(max(hazard_intensity), 2) as Max_Inundation_Depth,
+
+      }) as regional_impact
+ ->
+select({ *, Region.Region as Region })
+ ->
+sort(Region)
+ ->
+save('regional-impact', format: 'csv')
+
+regional_impact -> save('regional-impact-map', format: 'geojson')
+
+#
+# By-Type impact
+#
+event_impact_table
+ ->
+group(by: { exposure.UseType },
+      select: {
+            *,
+            count(Exposed) as Exposed_Count,
+            count(*) as Total_Count,
+
+            round(sum(ExposedValue)) as Total_Exposed_Value,
+            round(sum(exposure.Value)) as Total_Value,
+
+            round(sum(ExposedAreaOrLength)) as Total_Exposed_Area_Or_Length,
+            round(sum(AreaOrLength)) as Total_Area_Or_Length,
+
+            sum(Loss) as Total_Loss,
+
+            round(mean(hazard_intensity), 2) as Average_Inundation_Depth,
+            round(max(hazard_intensity), 2) as Max_Inundation_Depth,
+
+      }) as impact_by_type
+ ->
+sort(UseType)
+ ->
+save('impact-by-type', format: 'csv')
+
+#
+# Exposure-layer summary
+#
+event_impact_table
+ ->
+filter(Exposed or $include_unexposed)
+ ->
+select({
+         exposure as Exposure,
+         Exposed,
+         # NB: these values only differ if the hazard_depth doesn't exceed $min_depth
+         hazard_depth as Hazard_Depth,
+         hazard_intensity as Hazard_Used,
+         Loss,
+         Region.Region,
+         AreaOrLength,
+         ExposedAreaOrLength
+       }) as save_exposure_layer
+ ->
+save('exposure-impact', format: 'geojson')
+

@@ -28,4 +28,8 @@ This repository contains suite of models that was developed under PARTneR-2 Proj
 ### 4. HAZARD latest datasets
 - A directory `/mnt/DATA/production/outputs` has been created to house latest results of the current run.
 
-### 5. Judith, Sam, Sachin to continue......
+### 5. Risk Model Outputs
+- A directory `/mnt/DATA/production/impact_output` has been created to house RiskScape outputs.
+
+### 6. Visualization in dashboard
+- .....

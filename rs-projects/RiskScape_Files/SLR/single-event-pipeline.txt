@@ -1,0 +1,233 @@
+# parameters:
+# $hazard_maps: A CSV that points to other hazard .tif files to load
+# $event_ARI: the return period of the specific event to use
+# $SLR: projected sea-level rise
+# $islands: island groups to include, to filter out a subset of results
+# $metric_crs: A CRS suitable for representing the country's geometry in metre units
+
+#
+# Input exposure-layer
+#
+input(relation: $exposure, name: 'exposure') as input_exposures
+ ->
+select({
+         *,
+         if_null(exposure.Asset, $asset_type) as Asset,
+         if_null(exposure.UseType, 'Unknown') as UseType,
+         if_null(exposure.Value, 0.0) as Value
+       })
+ ->
+# try to make it obvious in the results whether loss=0 because there's no risk, or
+# because we can't calculate the loss at all (Loss_Model=0) case. We use 0/1 here
+# because we can aggregate across the dataset to get an overall answer easily
+select({
+         *,
+         if_then_else(is_null(exposure.Asset) or
+                      Asset = 'Unknown' or
+                      Asset = 'Population' or
+                      Value = 0,
+                      0,                     # zero means Exposure-only
+                      1) as Loss_Model
+       })
+ ->
+# we have tonnes of hazard maps organized into localities, e.g. island groups.
+# Find the group of .tif files that relate to this exposure, so we only have a single
+# hazard/impact per exposure. In other words, this exposure should only
+# fall within the bounds of one group of hazard maps and we can ignore the other hazard maps
+select({ *, sample_one(exposure.geom, to_coverage(bookmark($hazard_index)), buffer-distance: 5000.0) as hazard_index }) as sample_hazard_group
+ ->
+# optionally filter by a subset of islands, so it runs faster
+filter(switch(hazard_index.group, default: $islands = ['All regions'], cases: [{ in: $islands, return: true }]))
+ ->
+select({ *, switch(Asset, default: false, cases: [{ in: $can_segment, return: true }]) as can_segment })
+ ->
+# reproject to a metric CRS to make measure/segment operations quicker for polygons/lines.
+select({ *, reproject(exposure.geom, $reproject_to) as geom }) as reproject
+->
+# segment any lines/polygons by a fixed distance (not by a grid).
+# If any part of segment is exposed, then the whole segment is exposed.
+select({ *, measure(geom) as orig_size, segment(geom, $cut_distance) as segmented_geom }) as segment
+ ->
+# We work around RiskScape type ancestor issues with lists here by always segmenting and unnesting
+# If we can't segment, we throw away everything except the first row
+unnest(segmented_geom, index-key: 'segment_id')
+ ->
+filter(can_segment or segment_id = 1)
+ ->
+# NB: don't segment buildings or other discrete assets
+select({ *, if_then_else(can_segment, segmented_geom, geom ) as geom })
+ ->
+select({ *, measure(geom) as size }) as measure
+ ->
+# NB: use scale_factor=1.0 for points, so we don't end up with NaN
+select({ *, if_then_else(can_segment and size > 0, size / orig_size, 1.0) as scale_factor })
+ ->
+select({
+         *,
+         merge(exposure, {
+                           geom,
+                           Asset,
+                           UseType,
+                           Value * scale_factor as Value,
+                           round(size, 2) as Size,
+                           Loss_Model
+                         }) as exposure
+       }) as scale_exposures
+  ->
+# join up each exposure to the group of hazard maps that it falls within
+join(hazard_index.group = event.group) as join_exposures_and_events
+
+#
+# Input hazard data
+#
+# this is probabilistic data, so the input is a CSV where each row is a hazard .tif
+# We need to filter it so that we pull out a single event
+input($hazard_maps, name: 'event') as hazard_input
+ ->
+filter(event.Return_Period = $event_ARI and event.SLR = $SLR)
+ ->
+select({ { event.*, bookmark(id: event.file, options: {}, type: 'coverage(floating)') as coverage } as event })
+ -> 
+join_exposures_and_events.rhs
+
+#
+# Geospatial sampling
+#
+join_exposures_and_events
+ ->
+select({ *, sample_one(exposure, to_coverage($regions), buffer-distance: 50000.0) as Region }) as sample_region
+ ->
+# using all-intersections sampling for point data shouldn't matter
+select({ *, sample(geom, event.coverage) as hazard_depth }) as sample_hazard
+ ->
+select({ 
+         *,
+         max(map(hazard_depth, h -> h.sampled)) as hazard_depth,
+         sum(map(hazard_depth, h -> if_then_else(h.sampled > $min_depth, measure(h), 0.0))) as ExposedAreaOrLength
+       })
+ ->
+# use null here to skip CPython processing (and sped up how quickly the model runs)
+select({ *, if_then_else(hazard_depth > $min_depth, hazard_depth, null_of('floating')) as hazard_intensity }) as sampled
+ ->
+
+#
+# consequence analysis (calculate loss)
+#
+select({ *, if_null(hazard_intensity, 0.0) > 0.0 as Exposed })
+ ->
+select({
+         *,
+         if_then_else(Exposed, float(exposure.Value), 0.0) as ExposedValue,
+         exposure.Size as AreaOrLength
+       })
+ ->
+select({ *, Flood_Loss(exposure, hazard_intensity).Direct_Loss as Loss }) as event_impact_table
+
+#
+# Reporting the results - total/national loss
+#
+event_impact_table
+ ->
+group(by: { event.SLR, event.Return_Period },
+      select: {
+            *,
+            if_then_else(round(mean(exposure.Loss_Model)) > 0, 'Loss model', 'Exposure model') as Model_Type,
+            count(Exposed) as Exposed_Count,
+            count(*) as Total_Count,
+
+            round(sum(ExposedValue)) as Total_Exposed_Value,
+            round(sum(exposure.Value)) as Total_Value,
+
+            round(sum(ExposedAreaOrLength)) as Total_Exposed_Area_Or_Length,
+            round(sum(AreaOrLength)) as Total_Area_Or_Length,
+
+            sum(Loss) as Total_Loss,
+
+            round(mean(hazard_intensity), 2) as Average_Inundation_Depth,
+            round(max(hazard_intensity), 2) as Max_Inundation_Depth,
+      }) as national_event_impact
+ ->
+save('national-impact', format: 'csv')
+
+#
+# Regional impact
+#
+event_impact_table
+ ->
+group(by: { Region, event.SLR, event.Return_Period },
+      select: {
+            *,
+            if_then_else(round(mean(exposure.Loss_Model)) > 0, 'Loss model', 'Exposure model') as Model_Type,
+            count(Exposed) as Exposed_Count,
+            count(*) as Total_Count,
+
+            round(sum(ExposedValue)) as Total_Exposed_Value,
+            round(sum(exposure.Value)) as Total_Value,
+
+            round(sum(ExposedAreaOrLength)) as Total_Exposed_Area_Or_Length,
+            round(sum(AreaOrLength)) as Total_Area_Or_Length,
+
+            sum(Loss) as Total_Loss,
+
+            round(mean(hazard_intensity), 2) as Average_Inundation_Depth,
+            round(max(hazard_intensity), 2) as Max_Inundation_Depth,
+
+      }) as regional_impact
+ ->
+select({ *, Region.Region as Region })
+ ->
+sort(Region)
+ ->
+save('regional-impact', format: 'csv')
+
+regional_impact -> save('regional-impact-map', format: 'geojson')
+
+#
+# By-Type impact
+#
+event_impact_table
+ ->
+group(by: { exposure.UseType, event.SLR, event.Return_Period },
+      select: {
+            *,
+            count(Exposed) as Exposed_Count,
+            count(*) as Total_Count,
+
+            round(sum(ExposedValue)) as Total_Exposed_Value,
+            round(sum(exposure.Value)) as Total_Value,
+
+            round(sum(ExposedAreaOrLength)) as Total_Exposed_Area_Or_Length,
+            round(sum(AreaOrLength)) as Total_Area_Or_Length,
+
+            sum(Loss) as Total_Loss,
+
+            round(mean(hazard_intensity), 2) as Average_Inundation_Depth,
+            round(max(hazard_intensity), 2) as Max_Inundation_Depth,
+
+      }) as impact_by_type
+ ->
+sort(UseType)
+ ->
+save('impact-by-type', format: 'csv')
+
+#
+# Exposure-layer summary
+#
+event_impact_table
+ ->
+filter(Exposed or $include_unexposed)
+ ->
+select({
+         exposure as Exposure,
+         Exposed,
+         # NB: these values only differ if the hazard_depth doesn't exceed $min_depth
+         hazard_depth as Hazard_Depth,
+         hazard_intensity as Hazard_Used,
+         Loss,
+         Region.Region,
+         AreaOrLength,
+         ExposedAreaOrLength
+       }) as save_exposure_layer
+ ->
+save('exposure-impact', format: 'geojson')
+

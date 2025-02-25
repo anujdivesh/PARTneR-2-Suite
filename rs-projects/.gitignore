@@ -1,0 +1,23 @@
+# Ignore .tif and .tiff image files (common in geospatial data)
+*.tif
+*.tiff
+
+# Ignore .gpkg files (common for geospatial data storage)
+*.gpkg
+
+# Ignore specific large files mentioned in the error
+rs-projects/hazard/ws_hazard/TC/Gita/SA_savaii_upolu_local_wind.tif
+rs-projects/hazard/vu_hazard/TC/Lola/_merged.tif
+rs-projects/exposure/vu_exposure/PCRAFI_1and2_VU_building_class_value2024.gpkg
+rs-projects/hazard/vu_hazard/Fluvial/Pluvial-Fluvial_Malekula_12hr_ARI50_hmax.tiff
+rs-projects/hazard/ck_hazard/TC/Meena/_CK_subdomain_1_local_wind.tif
+rs-projects/hazard/ck_hazard/TC/Meena/_CK_subdomain_2_local_wind.tif
+rs-projects/hazard/vu_hazard/Fluvial/Pluvial-Fluvial_Malekula_12hr_ARI100_hmax.tiff
+rs-projects/hazard/vu_hazard/Fluvial/Pluvial-Fluvial_Malekula_12hr_ARI10_hmax.tiff
+rs-projects/hazard/vu_hazard/TC/Lola/local_wind.tif
+
+# Ignore directories where large files might be stored
+rs-projects/hazard/ck_hazard/TC/Meena/
+rs-projects/hazard/vu_hazard/Fluvial/
+rs-projects/hazard/vu_hazard/TC/Lola/
+rs-projects/hazard/ws_hazard/TC/Gita/

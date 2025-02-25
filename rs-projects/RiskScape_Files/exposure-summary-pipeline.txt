@@ -1,0 +1,78 @@
+#
+# Input exposure-layer
+#
+input(relation: $exposure) as input_exposures
+ ->
+select({ *, sample_one(*, to_coverage($regions), buffer-distance: 100) as Region }) as sample_region
+ ->
+group(select: {
+            count(*) as Total_Count,
+            round(sum(Value)) as Total_Value,
+            count(is_null(geom) or str(geom) = 'POINT EMPTY') as Assets_Missing_geometry,
+            count(is_null(Region)) as Assets_in_Unknown_Region,
+            count(is_null(Value) or Value <= 0) as Assets_with_No_Value,
+      }) as national_event_impact
+ ->
+save('national-total', format: 'csv')
+
+#
+# Regional summary
+#
+sample_region
+ ->
+group(by: { Region },
+      select: {
+            *,
+            count(*) as Total_Count,
+            round(sum(Value)) as Total_Value
+
+      }) as regional_impact
+ ->
+select({ *, if_null(Region.Region, 'Unknown Region') as Region })
+ ->
+sort(Region)
+ ->
+save('regional-total', format: 'csv')
+
+regional_impact -> save('regional-total-map', format: 'geojson')
+
+#
+# By-Type
+#
+sample_region
+ ->
+group(by: { UseType },
+      select: {
+            *,
+            count(*) as Total_Count,
+            round(sum(Value)) as Total_Value
+
+      }) as impact_by_type
+ ->
+sort(UseType)
+ ->
+save('total-by-type', format: 'csv')
+
+
+sample_region
+ ->
+filter(is_null(geom) or str(geom) = 'POINT EMPTY')
+ ->
+# some save formats don't like null geometry (and there's no point saving this geometry)
+select({ *, '???' as geom, '???' as Region })
+ ->
+save('missing-geometry', format: 'csv')
+
+sample_region
+ ->
+filter(is_not_null(geom) and str(geom) != 'POINT EMPTY') as non_null_geometry
+ -> 
+filter(is_null(Region))
+ ->
+save('unknown-region', format: 'geojson')
+
+non_null_geometry
+ ->
+filter(is_null(Value) or Value <= 0)
+ ->
+save('missing-value', format: 'geojson')

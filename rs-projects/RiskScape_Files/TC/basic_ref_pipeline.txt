@@ -1,0 +1,407 @@
+# Note that full REF model pipeline is in the RSMC-TCWC directory.
+# This is a simplified version that runs over a single exposure-layer.
+#
+input($exposure, name: 'exposure') as input_exposures
+
+# load the point-based FMS data that has the previous/forecast location of the cyclone eye
+# and the max predicted windspeed at that location
+input($FMS_track)
+ ->
+combine_track_sources
+
+input($IBTrACS)
+ ->
+union() as combine_track_sources
+ ->
+# reproject to a 'meridian agnostic' CRS (e.g. EPSG:3832). This should avoid any
+# weird geometry issues when the TC track crosses the meridian
+select({ *, reproject(geom, $reproject_to) as geom }) as TC_track_input
+ ->
+filter(RadiusMaxWinds > 0)  # zero indicates NaN/no data for max values
+ ->
+select({ buffer(geom, RadiusMaxWinds * 1852) as geom, MeanWind as WindSpeed, 'Radius of Maximum Winds' as Danger })
+ ->
+union() as combine_wind_swaths
+ ->
+group({ to_coverage(*) as wind_coverage })
+ ->
+join(on: true).rhs as join_wind_swaths
+
+TC_track_input
+ ->
+filter(MinGaleRadius != maxfloat())  # maxfloat() indicates NaN/no data for min values
+ ->
+select({ buffer(geom, MinGaleRadius * 1852) as geom, 34.0 as WindSpeed, 'Gale Winds' as Danger })
+ ->
+combine_wind_swaths
+
+TC_track_input
+ ->
+filter(MaxGaleRadius > 0)  # zero indicates NaN/no data for max values
+ ->
+select({ buffer(geom, MaxGaleRadius * 1852) as geom, 34.0 as WindSpeed, 'Possible Gale Winds' as Danger })
+ ->
+combine_wind_swaths
+
+# Storm-force winds are > 48 knots according to WMO
+TC_track_input
+ ->
+filter(MinStormRadius != maxfloat())  # maxfloat() indicates NaN/no data for min values
+ ->
+select({ buffer(geom, MinStormRadius * 1852) as geom, 48.0 as WindSpeed, 'Storm Winds' as Danger })
+ ->
+combine_wind_swaths
+
+TC_track_input
+ ->
+filter(MaxStormRadius > 0)  # zero indicates NaN/no data for max values
+ ->
+select({ buffer(geom, MaxStormRadius * 1852) as geom, 48.0 as WindSpeed, 'Possible Storm Winds' as Danger })
+ ->
+combine_wind_swaths
+
+# Hurricane-force winds are > 64 knots according to WMO
+TC_track_input
+ ->
+filter(MinHurricaneRadius != maxfloat())  # maxfloat() indicates NaN/no data for min values
+ ->
+select({ buffer(geom, MinHurricaneRadius * 1852) as geom, 64.0 as WindSpeed, 'Hurricane Winds' as Danger })
+ ->
+combine_wind_swaths
+
+TC_track_input
+ ->
+filter(MaxHurricaneRadius > 0)  # zero indicates NaN/no data for max values
+ ->
+select({ buffer(geom, MaxHurricaneRadius * 1852) as geom, 64.0 as WindSpeed, 'Possible Hurricane Winds' as Danger })
+ ->
+combine_wind_swaths
+
+TC_track_input
+ ->
+filter(Uncertainty > 0)  # zero indicates NaN/no data for max values
+ ->
+select({ buffer(geom, Uncertainty * 1852) as geom, 0.0 as WindSpeed, 'Track Uncertainty' as Danger })
+ ->
+combine_wind_swaths
+
+# save a copy of the wind polygons so we can "show our working"
+combine_wind_swaths
+ ->
+# the buffered circles are a bit weird on their own, so nicefy them by combining related polygons
+group(by: { Danger, WindSpeed },
+      select: {
+          *,
+          to_list(geom) as geom
+      })
+ ->
+select({ *, combine_polygons(geom) as geom }) as single_polygon_windswaths
+ ->
+select({  *, reproject(geom, $reproject_to) as geom })
+ ->
+# sorting renders the overlapping geometry in QGIS nicer
+sort(measure(geom), 'DESC')
+ ->
+save('wind-swaths', format: 'geopackage')
+
+TC_track_input
+ ->
+group({
+         to_list({ geom: centroid(geom), line: "__linenum" }) as points,
+         mode(geom) as a_point
+      })
+ ->
+select({ combine_points(points, a_point) as geom }) as tc_track
+ ->
+select({ *, reproject(geom, $reproject_to) as geom, $track_distances as Track_distance })
+ ->
+unnest(Track_distance)
+ ->
+select({ *, buffer(geom, Track_distance * 1000) as geom }) as track_distance
+ ->
+select({  *, reproject(geom, $reproject_to) as geom })
+ ->
+sort(Track_distance, 'DESC')
+ ->
+save('track-distance', format: 'geopackage')
+
+tc_track
+ ->
+select({  *, reproject(geom, $reproject_to) as geom })
+ ->
+save('cyclone-track', format: 'geopackage')
+
+track_distance
+ ->
+group({ to_coverage(*) as track_coverage })
+ ->
+join_track_distance.rhs
+
+#
+# Floodplains
+#
+single_polygon_windswaths
+ ->
+filter(WindSpeed > 0)
+ ->
+# wind polygons overlap, so just combine everything into a single polygon.
+# Otherwise we end up woith overlapping segments at the end 
+group({ to_list(geom) as geom })
+ ->
+select({ *, combine_polygons(geom) as geom })
+ ->
+# reproject() to restore the Referenced[CRS]
+select({ *, reproject(geom, $reproject_to) as geom }) as highwind_area
+ ->
+# this is a cumbersome approach, but the only way to do it in the engine currently
+select({ layer_intersection(*, $floodplain1, {}) as intersecting }) as malampa_floodplains
+ ->
+union() as intersecting_floodplains
+
+highwind_area
+ ->
+select({ layer_intersection(*, $floodplain2, {}) as intersecting }) as penama_floodplains
+ ->
+intersecting_floodplains
+
+highwind_area
+ ->
+select({ layer_intersection(*, $floodplain3, {}) as intersecting }) as sanma_floodplains
+ ->
+intersecting_floodplains
+
+highwind_area
+ ->
+select({ layer_intersection(*, $floodplain4, {}) as intersecting }) as shefa_floodplains
+ ->
+intersecting_floodplains
+
+highwind_area
+ ->
+select({ layer_intersection(*, $floodplain5, {}) as intersecting }) as tafea_floodplains
+ ->
+intersecting_floodplains
+
+highwind_area
+ ->
+select({ layer_intersection(*, $floodplain6, {}) as intersecting }) as torba_floodplains
+ ->
+intersecting_floodplains
+ ->
+# intersect the wind polygon with the flood-plain layer
+# we should be left with the flood-plains that are exposed to the high winds
+unnest(intersecting)
+ ->
+# cut the polygons into smaller pieces to speed up spatial lookups
+select({ segment(intersecting.geom, 1000) as geom }) as segment_floodplains
+ ->
+unnest(geom)
+ ->
+group({ to_coverage(*) as floodplain_coverage })
+ ->
+join_floodplains.rhs
+
+#
+# Main pipeline
+#
+input_exposures
+ ->
+select({ *, switch(exposure.Asset, default: false, cases: [{ in: $can_segment, return: true }]) as can_segment })
+ ->
+# segment any lines/polygons by a fixed distance (not by a grid).
+# If any part of segment is exposed, then the whole segment is exposed.
+select({ *, measure(exposure.geom) as orig_size, segment(exposure.geom, $cut_distance) as segmented_geom }) as segment
+ ->
+# We work around RiskScape type ancestor issues with lists here by always segmenting and unnesting
+# If we can't segment, we throw away everything except the first row
+unnest(segmented_geom, index-key: 'segment_id')
+ ->
+filter(can_segment or segment_id = 1)
+ ->
+# NB: don't segment buildings or other discrete assets
+select({ *, if_then_else(can_segment, segmented_geom, exposure.geom ) as geom })
+ ->
+select({ *, measure(geom) as size }) as measure
+ ->
+# NB: use scale_factor=1.0 for points, so we don't end up with NaN
+select({ *, if_then_else(can_segment and size > 0, size / orig_size, 1.0) as scale_factor })
+ ->
+select({
+         *,
+         merge(exposure, {
+                           geom,
+                           exposure.Value * scale_factor as Value,
+                           size as Size
+                         }) as exposure
+       })
+->
+join_wind_swaths
+
+#
+# Sampling
+#
+join_wind_swaths
+->
+join(on: true) as join_track_distance
+->
+# Note that not all countries have REF floodplain data
+join(on: true, join-type: 'LEFT_OUTER') as join_floodplains
+ ->
+select({
+         *,
+         sample(exposure.geom, wind_coverage) as sampled,
+         sample(exposure.geom, track_coverage) as sampled_track,
+         sample_one(exposure.geom, floodplain_coverage) as floodplain
+       }) as sampled
+->
+select({
+         *,
+         max_windspeed(map(sampled, h -> { h.sampled.Danger, h.sampled.WindSpeed })) as max_wind,
+         min(map(sampled_track, h -> h.sampled.Track_distance)) as Track_distance,
+         floodplain,
+       })
+->
+select({ *, if_then_else(max_wind.Danger = 'Track Uncertainty', null_of('floating'), max_wind.WindSpeed) as WindSpeed })
+->
+select({
+          *,
+          sample_one(exposure, to_coverage($map_summary), 10000) as map_region,
+          sample_one(exposure, to_coverage($table_summary), 10000) as table_region,
+          max_wind.Danger = 'Track Uncertainty' as Uncertainty
+       }) as event_impact_table
+
+#
+# Reporting
+#
+event_impact_table
+->
+select({
+      *,
+      [ null_of('geometry'), table_region.geom, map_region.geom ] as geom,
+      [{ null_of('text') as ID, null_of('text') as Region, 'National' as Level },
+       { table_region.ID, table_region.Region, 'Admin1' as Level },
+       { map_region.ID, map_region.Region, 'Admin2' as Level }] as Region
+    })
+ ->
+unnest([Region, geom]) as unnest_regions
+ ->
+group(by: { Region, geom },
+      select: {
+        { Region.*, geom } as Region,
+        mode(max_wind.Danger) as Overall_Winds,
+        round(min(WindSpeed)) as Min_WindSpeed_knots,
+        round(max(WindSpeed)) as Max_WindSpeed_knots,
+        round(min(WindSpeed) * 1.852) as Min_WindSpeed_kmph,
+        round(max(WindSpeed) * 1.852) as Max_WindSpeed_kmph,
+        
+        count(WindSpeed > 0) as Exposed_Number,
+        round(if_null(
+              sum(if_then_else(WindSpeed > 0, exposure.Value, 0.0)),
+              0.0)) as Exposed_Value,
+        round(if_null(
+              sum(if_then_else(WindSpeed > 0, exposure.Size, 0.0)),
+              0.0), 2) as Area_or_Length_m,
+
+        count(is_not_null(floodplain)) as Exposed_Number_in_Floodplains,
+        round(if_null(
+              sum(if_then_else(is_null(floodplain), 0.0, exposure.Value)),
+              0.0)) as Exposed_Value_in_Floodplains,
+
+        count(Uncertainty) as Exposed_Number_in_Track_Uncertainty,
+        round(if_null(
+              sum(if_then_else(Uncertainty, exposure.Value, 0.0)),
+              0.0)) as Exposed_Value_in_Track_Uncertainty,
+
+      }) as aggregate_impacts
+ ->
+filter(Region.Level = 'Admin2') as filter_admin2_regions
+ ->
+save('regional-impacts', format: 'geojson')
+
+aggregate_impacts
+ ->
+filter(Region.Level = 'Admin1') as filter_admin1_regions
+ ->
+select({ *, Region.Region as Region })
+ ->
+sort([Region])
+ ->
+save('regional-summary', format: 'csv')
+
+aggregate_impacts
+ ->
+filter(Region.Level = 'National') as filter_national
+ ->
+select({ *, Region.Level as Region })
+ ->
+save('total-exposed', format: 'csv')
+
+event_impact_table
+ ->
+select({ *, if_null(max_wind.Danger, 'Not exposed') as Danger })
+ ->
+group(by: { WindSpeed, Danger },
+      select: {
+        *,
+        count(*) as Number,
+        round(sum(exposure.Value)) as Value,
+        round(sum(exposure.Size), 2) as Area_or_Length_m,
+      })
+ ->
+sort([WindSpeed, if_then_else(starts_with(Danger, 'Possible'), 0, 1)])
+ ->
+save('total-by-windspeed')
+
+event_impact_table
+ ->
+select({
+         *,
+         if_then_else(is_null(Track_distance),
+                         str(max($track_distances)) + '+ km away from track',
+                         'Within ' + str(Track_distance) + 'km of track') as Track_distance,
+         Track_distance as km
+       })
+ ->
+group(by: { Track_distance, km },
+      select: {
+        *,
+        count(*) as Number,
+        round(sum(exposure.Value)) as Value,
+        round(sum(exposure.Size), 2) as Area_or_Length_m,
+      })
+ ->
+sort([km])
+ ->
+save('total-by-track-distance')
+
+event_impact_table
+ ->
+group(by: { floodplain },
+      select: {
+        *,
+        'Within ' + str(max(Track_distance)) + 'km of track' as Track_distance,
+        round(max(WindSpeed)) as WindSpeed_knots,
+        round(max(WindSpeed) * 1.852) as WindSpeed_kmph,
+        count(*) as Exposed_Number,
+        round(sum(exposure.Value)) as Exposed_Value,
+        round(sum(exposure.Size), 2) as Area_or_Length_m,
+      })
+ ->
+save('floodplain-exposure', format: 'geojson') as save_floodplains
+
+event_impact_table
+ ->
+filter(WindSpeed > 0)
+ ->
+select({
+         exposure.*,
+         map_region.Region,
+         'Within ' + str(Track_distance) + 'km of track' as Track_distance,
+         max_wind.Danger,
+         WindSpeed as WindSpeed_knots,
+         round(WindSpeed * 1.852) as WindSpeed_kmph,
+         str(is_not_null(floodplain)) as In_Floodplain
+      })
+ ->
+save('exposed-features', format: 'geopackage')
+
